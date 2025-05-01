@@ -5,6 +5,10 @@
 // Branch: feature/custom-menu-and-status - Add a custom menu for update/summarize, and display last refresh and last upload times
 // Branch: fix/header-detection - Dynamically detect the header row in summarizeCycles
 // Branch: feature/info-next-to-headers - Move data refresh info to columns after the last header in farming-transactions
+// Branch: feature/setup-helper - Add folder creation helper and menu item for new users
+// Branch: feature/auto-folder-id-and-setup-popup - Store folder ID in PropertiesService and improve setup popup
+// Branch: feature/custom-dialog-setup - Use a custom HTML dialog for folder creation popup
+// Branch: feature/template-sheet-naming - Rename sheet and tabs for template use
 /**
  * Grand Exchange Farming Dashboard Script
  * 
@@ -19,6 +23,56 @@ const RUNELITE_JSON_FOLDER_ID = '1XQJ9bIWpawauW7H8n89GECWQlWfV51z4';
 
 // Import utility, mapping, and farming functions
 // (Google Apps Script loads all .gs files in the project, so just use functions directly)
+
+function getDataFolderId() {
+  var props = PropertiesService.getDocumentProperties();
+  var id = props.getProperty('RUNELITE_JSON_FOLDER_ID');
+  if (id) return id;
+  // fallback to constant if not set
+  return typeof RUNELITE_JSON_FOLDER_ID !== 'undefined' ? RUNELITE_JSON_FOLDER_ID : '';
+}
+
+function setDataFolderId(id) {
+  PropertiesService.getDocumentProperties().setProperty('RUNELITE_JSON_FOLDER_ID', id);
+}
+
+function createGrandExchangeDataFolder() {
+  var folderName = 'Grand Exchange Data';
+  var folders = DriveApp.getFoldersByName(folderName);
+  var folder, created = false;
+  if (folders.hasNext()) {
+    folder = folders.next();
+  } else {
+    folder = DriveApp.createFolder(folderName);
+    created = true;
+  }
+  setDataFolderId(folder.getId());
+  var url = 'https://drive.google.com/drive/folders/' + folder.getId();
+  var html = HtmlService.createHtmlOutput(
+    '<div style="font-size:14px">' +
+    '<b>Folder "' + folderName + '" ' + (created ? 'has been created' : 'already exists') + ' in your Drive.</b><br><br>' +
+    '1. <a href="' + url + '" target="_blank">Click here to open the folder in Google Drive</a><br>' +
+    '2. Go to <a href="https://runelite.net/account/grand-exchange" target="_blank">runelite.net/account/grand-exchange</a> and log in.<br>' +
+    '3. Click <b>Export Grand Exchange</b> to download your <code>grand-exchange.json</code>.<br>' +
+    '4. Upload <code>grand-exchange.json</code> to the "Grand Exchange Data" folder.' +
+    '</div>'
+  ).setWidth(420).setHeight(260);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Grand Exchange Data Setup');
+}
+
+function getLastJsonUploadTime() {
+  try {
+    var folderId = getDataFolderId();
+    if (!folderId) return '';
+    var folder = DriveApp.getFolderById(folderId);
+    var files = folder.getFilesByName(RUNELITE_JSON_FILENAME);
+    if (!files.hasNext()) return '';
+    var file = files.next();
+    return file.getLastUpdated();
+  } catch (e) {
+    return '';
+  }
+}
 
 function loadRuneLiteJSONFromFolder(filename, folderId) {
   Logger.log('Looking for file: ' + filename + ' in folder: ' + folderId);
@@ -38,21 +92,14 @@ function loadRuneLiteJSONFromFolder(filename, folderId) {
   }
 }
 
-function getLastJsonUploadTime() {
-  try {
-    var folder = DriveApp.getFolderById(RUNELITE_JSON_FOLDER_ID);
-    var files = folder.getFilesByName(RUNELITE_JSON_FILENAME);
-    if (!files.hasNext()) return '';
-    var file = files.next();
-    return file.getLastUpdated();
-  } catch (e) {
-    return '';
-  }
-}
+// Update sheet/tab names
+const MAIN_SHEET_NAME = 'All GE Transactions';
+const CYCLES_SHEET_NAME = 'Farming Cycles';
 
 function updateFarmingDashboard() {
   // 1. Load JSON data from specific folder in Drive
-  var transactions = loadRuneLiteJSONFromFolder(RUNELITE_JSON_FILENAME, RUNELITE_JSON_FOLDER_ID);
+  var folderId = getDataFolderId();
+  var transactions = loadRuneLiteJSONFromFolder(RUNELITE_JSON_FILENAME, folderId);
   // 2. Fetch item mappings
   var apiMappings = fetchItemMappings();
   // 3. Process transactions (normalize, add profit/loss)
@@ -61,11 +108,10 @@ function updateFarmingDashboard() {
   processed.sort(function(a, b) { return b.time - a.time; });
   var limited = processed.slice(0, 50);
   // 5. Output to sheet with Cycle ID, Patches, Dead Patches columns
-  var sheetName = 'farming-transactions';
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName(sheetName);
+  var sheet = ss.getSheetByName(MAIN_SHEET_NAME);
   if (!sheet) {
-    sheet = ss.insertSheet(sheetName);
+    sheet = ss.insertSheet(MAIN_SHEET_NAME, 0);
   } else {
     sheet.clear();
   }
@@ -117,15 +163,12 @@ function updateFarmingDashboard() {
   // Move data refresh info to columns after the last header
   var now = new Date();
   var lastUpload = getLastJsonUploadTime();
-  // Find the last header column
   var infoCol = headers.length + 1;
-  // Write info in row 1, columns after headers
   sheet.getRange(1, infoCol, 1, 2).setValues([["Last Data Refresh:", Utilities.formatDate(now, ss.getSpreadsheetTimeZone(), 'yyyy-MM-dd HH:mm:ss')]]);
   sheet.getRange(2, infoCol, 1, 2).setValues([["Last grand-exchange.json Upload:", lastUpload ? Utilities.formatDate(lastUpload, ss.getSpreadsheetTimeZone(), 'yyyy-MM-dd HH:mm:ss') : 'Not found']]);
   sheet.getRange(1, infoCol, 2, 2).setFontWeight('bold');
-  // Optionally, set a background color for clarity
   sheet.getRange(1, infoCol, 2, 2).setBackground('#f3f3f3');
-  Logger.log('Wrote ' + rows.length + ' transactions to sheet: ' + sheetName);
+  Logger.log('Wrote ' + rows.length + ' transactions to sheet: ' + MAIN_SHEET_NAME);
 }
 
 /**
@@ -136,9 +179,9 @@ function updateFarmingDashboard() {
  */
 function summarizeCycles() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var txSheet = ss.getSheetByName('farming-transactions');
+  var txSheet = ss.getSheetByName(MAIN_SHEET_NAME);
   if (!txSheet) {
-    Logger.log('No farming-transactions sheet found.');
+    Logger.log('No ' + MAIN_SHEET_NAME + ' sheet found.');
     return;
   }
   var data = txSheet.getDataRange().getValues();
@@ -151,7 +194,7 @@ function summarizeCycles() {
     }
   }
   if (headerRowIdx === -1) {
-    Logger.log('Could not find header row in farming-transactions.');
+    Logger.log('Could not find header row in ' + MAIN_SHEET_NAME + '.');
     return;
   }
   var headers = data[headerRowIdx];
@@ -204,10 +247,10 @@ function summarizeCycles() {
     var avgYield = effectivePatches > 0 ? (harvest / effectivePatches) : 0;
     summary.push([cycleId, crop, seeds, seedsUsed, harvest, patches, deadPatches, effectivePatches, usedSeedCost, revenue, net, avgYield]);
   });
-  // Output to farming-cycles sheet
-  var cycleSheet = ss.getSheetByName('farming-cycles');
+  // Output to Farming Cycles sheet
+  var cycleSheet = ss.getSheetByName(CYCLES_SHEET_NAME);
   if (!cycleSheet) {
-    cycleSheet = ss.insertSheet('farming-cycles');
+    cycleSheet = ss.insertSheet(CYCLES_SHEET_NAME, 1);
   } else {
     cycleSheet.clear();
   }
@@ -243,7 +286,7 @@ function summarizeCycles() {
       .build());
     cycleSheet.setConditionalFormatRules(rules);
   }
-  Logger.log('Wrote ' + (summary.length - 1) + ' cycle summaries to sheet: farming-cycles');
+  Logger.log('Wrote ' + (summary.length - 1) + ' cycle summaries to sheet: ' + CYCLES_SHEET_NAME);
 }
 
 function onOpen() {
@@ -251,5 +294,7 @@ function onOpen() {
   ui.createMenu('Farming Dashboard')
     .addItem('Update Transactions', 'updateFarmingDashboard')
     .addItem('Summarize Cycles', 'summarizeCycles')
+    .addSeparator()
+    .addItem('Create Data Folder', 'createGrandExchangeDataFolder')
     .addToUi();
 } 

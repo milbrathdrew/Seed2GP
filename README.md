@@ -12,6 +12,20 @@
 - **Custom menu**: update transactions and summarize cycles with a click
 - **Sheet info**: see last data refresh and last JSON upload time at a glance
 
+## Setup for New Users
+1. **Create a folder in Google Drive named `Grand Exchange Data`.**
+   - Or use the "Create Data Folder" option in the sheet menu (Farming Dashboard > Create Data Folder).
+2. **Export your `grand-exchange.json` from [RuneLite Grand Exchange](https://runelite.net/account/grand-exchange).**
+3. **Upload the file to the `Grand Exchange Data` folder in your Drive.**
+4. **Update the script's configuration** with the correct folder ID:
+   - In the Apps Script editor, set:
+     ```js
+     const RUNELITE_JSON_FILENAME = 'grand-exchange.json';
+     const RUNELITE_JSON_FOLDER_ID = '<<FOLDER_ID_OF_Grand_Exchange_Data>>';
+     ```
+   - To get the folder ID: open the `Grand Exchange Data` folder in Drive and copy the string after `/folders/` in the URL.
+5. **Use the "Farming Dashboard" menu** in your sheet to update and analyze your data.
+
 ## How It Works
 1. **Export your `grand-exchange.json`** from RuneLite and upload it to the configured Google Drive folder.
 2. **Open your bound Google Sheet** and use the "Farming Dashboard" menu to update transactions.
